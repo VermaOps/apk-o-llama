@@ -1,5 +1,5 @@
 [![Burp Suite Extension](https://img.shields.io/badge/Burp%20Suite-Extension-orange)](https://portswigger.net/burp)
-[![Version](https://img.shields.io/badge/Version-1.1.0-blue)](https://github.com/berserkikun/apk-o-llama/releases)
+[![Version](https://img.shields.io/badge/Version-1.1.0-blue)](https://github.com/VermaOps/apk-o-llama/releases)
 [![Ollama](https://img.shields.io/badge/Ollama-Required-yellow)](https://ollama.com)
 
 # APK-o-Llama: AI-Powered APK Security Analysis for Burp Suite
@@ -215,7 +215,7 @@ APK-o-Llama has a persistent configuration system with UI management with specia
 
 ### Method 1: Pre-compiled Installation (Recommended)
 
-1. **Download**: Get the latest `apk-o-llama.jar` from the [Releases page](https://github.com/berserkikun/apk-o-llama/releases)
+1. **Download**: Get the latest `apk-o-llama.jar` from the [Releases page](https://github.com/VermaOps/apk-o-llama/releases)
 
 2. **Install in Burp**:
    ```bash
@@ -233,7 +233,7 @@ For custom modifications and development:
 
 1. **Clone Repository**:
    ```bash
-   git clone https://github.com/berserkikun/apk-o-llama.git
+   git clone https://github.com/VermaOps/apk-o-llama.git
    cd apk-o-llama
    ```
 
@@ -501,11 +501,11 @@ APK-o-Llama is built for the mobile security community. Your feedback shapes its
 
 <div align="center">
 
-**Built with ❤️ by [BerserkiKun](https://github.com/berserkikun)**
+**Built with ❤️ by [VermaOps](https://github.com/VermaOps)**
 
-[![GitHub Stars](https://img.shields.io/github/stars/berserkikun/apk-o-llama?style=social)](https://github.com/berserkikun/apk-o-llama/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/berserkikun/apk-o-llama)](https://github.com/berserkikun/apk-o-llama/issues)
-[![GitHub Forks](https://img.shields.io/github/forks/berserkikun/apk-o-llama?style=social)](https://github.com/berserkikun/apk-o-llama/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/VermaOps/apk-o-llama?style=social)](https://github.com/VermaOps/apk-o-llama/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/VermaOps/apk-o-llama)](https://github.com/VermaOps/apk-o-llama/issues)
+[![GitHub Forks](https://img.shields.io/github/forks/VermaOps/apk-o-llama?style=social)](https://github.com/VermaOps/apk-o-llama/network/members)
 
 **⭐ Star this repo if you find it useful for mobile security testing!**
 
