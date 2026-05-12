@@ -39,7 +39,7 @@
 
 ## Overview
 
-**APK-o-Llama v1.3.0** is a professional-grade Burp Suite extension that combines static APK security analysis with **multi-provider AI integration** (Ollama, OpenAI, Claude), enhanced analyzers, comprehensive configuration, and a professional UI. Designed specifically for mobile application security testers and Android bug bounty hunters, this tool transforms traditional static analysis by adding AI-powered vulnerability assessment and report generation directly within Burp Suite's interface.
+**APK-o-Llama** is a professional-grade Burp Suite extension that combines static APK security analysis with **multi-provider AI integration** (Ollama, OpenAI, Claude), enhanced analyzers, comprehensive configuration, and a professional UI. Designed specifically for mobile application security testers and Android bug bounty hunters, this tool transforms traditional static analysis by adding AI-powered vulnerability assessment and report generation directly within Burp Suite's interface.
 
 ## Key Highlights
 
