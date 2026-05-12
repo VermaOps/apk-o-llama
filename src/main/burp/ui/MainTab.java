@@ -1,8 +1,9 @@
 package burp.ui;
 
 import burp.api.montoya.MontoyaApi;
-import ai.OllamaClient;
+import ai.OllamaProvider;
 import ai.OllamaRequestManager;
+import ai.OpenAIProvider;
 import ai.OllamaRequest;
 import core.FindingCollector;
 import models.Finding;
@@ -23,6 +24,11 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.util.*;
 import java.util.List;
+
+import ai.AIProvider;
+import ai.AIProviderFactory;
+import ai.AIResponse;
+import ai.ClaudeProvider;
 import ai.ConversationHistory;
 import javax.swing.table.TableRowSorter;
 import java.io.FileWriter;
@@ -50,6 +56,8 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
 
 public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdateListener {
@@ -79,7 +87,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
     private JTextArea statusPlaceholder;
 
     private FindingCollector currentFindings;
-    private OllamaClient ollamaClient;
+    private AIProvider aiProvider;
     private OllamaRequestManager requestManager;
     private Properties configProperties;
     private File configFile;
@@ -93,12 +101,13 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
     private final Map<Integer, List<OllamaRequest>> rowToRequestsMap;
     
     // Column indices
-    private static final int COL_SEVERITY = 0;
-    private static final int COL_TITLE = 1;
-    private static final int COL_CATEGORY = 2;
-    private static final int COL_FILE = 3;
-    private static final int COL_CONFIDENCE = 4;
-    private static final int COL_AI_STATUS = 5;  // New column
+    private static final int COL_NUMBER = 0;      // Serial number column
+    private static final int COL_SEVERITY = 1;
+    private static final int COL_TITLE = 2;
+    private static final int COL_CATEGORY = 3;
+    private static final int COL_FILE = 4;
+    private static final int COL_CONFIDENCE = 5;
+    private static final int COL_AI_STATUS = 6;
     
     // Model listing components
     private JList<String> modelList;
@@ -108,8 +117,17 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
     public MainTab(MontoyaApi api) {
         this.api = api;
         this.currentFindings = new FindingCollector();
-        this.ollamaClient = new OllamaClient();
-        this.requestManager = new OllamaRequestManager(ollamaClient);
+        Configuration config = Configuration.getInstance();
+        // Initialize AI provider with error handling
+        try {
+            this.aiProvider = AIProviderFactory.createProvider(config);
+        } catch (Exception e) {
+            api.logging().logToError("Failed to create AI provider: " + e.getMessage());
+            // Fallback to a default provider or handle gracefully
+            // For now, we'll re-throw as RuntimeException to prevent UI from breaking
+            throw new RuntimeException("Failed to initialize AI provider: " + e.getMessage(), e);
+        }
+        this.requestManager = new OllamaRequestManager(aiProvider);
         this.requestManager.addStatusUpdateListener(this);
         
         this.findingIdToRowMap = new HashMap<>();
@@ -125,8 +143,8 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         
         JPanel findingsPanel = new JPanel(new BorderLayout());
         
-        // Updated column names
-        String[] columns = {"Severity", "Title", "Category", "File", "Confidence", "AI Status"};
+                // Updated column names - added "#" column at beginning
+        String[] columns = {"#", "Severity", "Title", "Category", "File", "Confidence", "AI Status"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -136,8 +154,10 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             @Override
             public Class<?> getColumnClass(int columnIndex) {
                 switch (columnIndex) {
+                    case COL_NUMBER:
+                        return Integer.class;
                     case COL_SEVERITY:
-                        return Severity.class;  // Change from Object.class to Severity.class
+                        return Severity.class;
                     case COL_CONFIDENCE:
                         return Double.class;
                     case COL_AI_STATUS:
@@ -145,7 +165,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                     case COL_TITLE:
                     case COL_CATEGORY:
                     case COL_FILE:
-                        return String.class;    // Change from Object.class to String.class
+                        return String.class;
                     default:
                         return Object.class;
                 }
@@ -156,7 +176,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         performBackgroundVersionCheck();
         
         // Load saved version check state and update button color
-        Configuration config = Configuration.getInstance();
+        Configuration config2 = Configuration.getInstance();
         updateReleasesButtonColor(config.isUpdateAvailable());
 
         findingsTable = new JTable(tableModel);
@@ -270,6 +290,13 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         
         // Set column widths
         TableColumnModel columnModel = findingsTable.getColumnModel();
+        
+        // Make "#" column as narrow as possible
+        columnModel.getColumn(COL_NUMBER).setMinWidth(25);
+        columnModel.getColumn(COL_NUMBER).setMaxWidth(35);
+        columnModel.getColumn(COL_NUMBER).setPreferredWidth(30);
+        columnModel.getColumn(COL_NUMBER).setResizable(false);
+
         columnModel.getColumn(COL_SEVERITY).setPreferredWidth(80);
         columnModel.getColumn(COL_TITLE).setPreferredWidth(250);
         columnModel.getColumn(COL_CATEGORY).setPreferredWidth(100);
@@ -333,11 +360,11 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         releasesButton.addActionListener(e -> handleNewReleasesClick());
         rightPanel.add(releasesButton);
 
-        JButton supportButton = new JButton("Support Development");
-        supportButton.addActionListener(e -> {
+        JButton githubButton = new JButton("GitHub");
+        githubButton.addActionListener(e -> {
             // Open GitHub support page in default browser
             try {
-                String url = "https://github.com/BerserkiKun/apk-o-llama?tab=readme-ov-file#support-development";
+                String url = "https://github.com/VermaOps/";
                 java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
                 
                 if (desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
@@ -354,7 +381,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                 showBrowserError(MainTab.this, "Browser couldn't be opened. Please check your system settings.");
             }
         });
-        rightPanel.add(supportButton);
+        rightPanel.add(githubButton);
         
         // Add both panels to main panel
         panel.add(leftPanel, BorderLayout.CENTER);
@@ -378,10 +405,11 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
      * Handles click on New Releases button
      */
     private void handleNewReleasesClick() {
-        // Switch to Configuration tab
+        // Switch to Configuration tab and get reference
+        JTabbedPane tabbedPane = null;
         for (java.awt.Component comp : this.getComponents()) {
             if (comp instanceof JTabbedPane) {
-                JTabbedPane tabbedPane = (JTabbedPane) comp;
+                tabbedPane = (JTabbedPane) comp;
                 // Find Configuration tab (index 2)
                 tabbedPane.setSelectedIndex(2);
                 break;
@@ -391,12 +419,31 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         // Get configuration
         Configuration config = Configuration.getInstance();
         
-        // Update status panel with checking message
-        if (statusPlaceholder != null) {
-            statusPlaceholder.setText("System Status Information\n\n" +
-                                    "• Checking for new version on GitHub...\n" +
-                                    "• Please wait...\n\nAuthor: BerserkiKun | GitHub");
+        // Try to find status area if not already referenced or if reference is stale
+        JTextArea targetStatusArea = this.statusPlaceholder;
+        if (targetStatusArea == null && tabbedPane != null) {
+            // Try to find status area in the Configuration tab
+            java.awt.Component configPanel = tabbedPane.getComponentAt(2);
+            if (configPanel instanceof JPanel) {
+                targetStatusArea = findStatusAreaInComponent((JPanel) configPanel);
+                if (targetStatusArea != null) {
+                    this.statusPlaceholder = targetStatusArea;
+                }
+            }
         }
+        
+        // Update status panel with checking message
+        if (targetStatusArea != null) {
+            targetStatusArea.setText("System Status Information\n\n" +
+                                    "• Checking for new version on GitHub...\n" +
+                                    "• Please wait...\n\nAuthor: VermaOps | GitHub");
+        } else {
+            // Fallback: log to Burp output
+            api.logging().logToOutput("Status panel not found, but version check continues in background");
+        }
+        
+        // Store final reference for inner class
+        final JTabbedPane finalTabbedPane = tabbedPane;
         
         // Perform version check in background
         SwingWorker<VersionCheckResult, Void> worker = new SwingWorker<>() {
@@ -411,13 +458,25 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                     VersionCheckResult result = get();
                     Configuration config = Configuration.getInstance();
                     
+                    // Find status area again (may have changed or been created after tab switch)
+                    JTextArea finalStatusArea = MainTab.this.statusPlaceholder;
+                    if (finalStatusArea == null && finalTabbedPane != null) {
+                        java.awt.Component configPanel = finalTabbedPane.getComponentAt(2);
+                        if (configPanel instanceof JPanel) {
+                            finalStatusArea = findStatusAreaInComponent((JPanel) configPanel);
+                            if (finalStatusArea != null) {
+                                MainTab.this.statusPlaceholder = finalStatusArea;
+                            }
+                        }
+                    }
+                    
                     if (result.error != null) {
                         // Error occurred
-                        if (statusPlaceholder != null) {
-                            statusPlaceholder.setText("System Status Information\n\n" +
+                        if (finalStatusArea != null) {
+                            finalStatusArea.setText("System Status Information\n\n" +
                                                     "• Version Check: FAILED\n" +
                                                     "• Error: " + result.error + "\n" +
-                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: BerserkiKun | GitHub");
+                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: VermaOps | GitHub");
                         }
                         return;
                     }
@@ -434,11 +493,11 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                         updateReleasesButtonColor(true);
                         
                         // Show in status panel
-                        if (statusPlaceholder != null) {
-                            statusPlaceholder.setText("System Status Information\n\n" +
+                        if (finalStatusArea != null) {
+                            finalStatusArea.setText("System Status Information\n\n" +
                                                     "• New version available: " + result.latestVersion + "\n" +
                                                     "• Opening GitHub release page...\n" +
-                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: BerserkiKun | GitHub");
+                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: VermaOps | GitHub");
                         }
                         
                         // Open GitHub releases page in browser
@@ -456,22 +515,30 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                         updateReleasesButtonColor(false);
                         
                         // Show in status panel
-                        if (statusPlaceholder != null) {
-                            statusPlaceholder.setText("System Status Information\n\n" +
+                        if (finalStatusArea != null) {
+                            finalStatusArea.setText("System Status Information\n\n" +
                                                     "• No new releases found.\n" +
                                                     "• You are already using the latest version: " + 
                                                     VersionManager.getCurrentVersion() + "\n" +
                                                     "• Latest on GitHub: " + result.latestVersion + "\n" +
-                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: BerserkiKun | GitHub");
+                                                    "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: VermaOps | GitHub");
                         }
                     }
                     
                 } catch (Exception e) {
-                    if (statusPlaceholder != null) {
-                        statusPlaceholder.setText("System Status Information\n\n" +
+                    // Find status area one more time for error case
+                    JTextArea errorStatusArea = MainTab.this.statusPlaceholder;
+                    if (errorStatusArea == null && finalTabbedPane != null) {
+                        java.awt.Component configPanel = finalTabbedPane.getComponentAt(2);
+                        if (configPanel instanceof JPanel) {
+                            errorStatusArea = findStatusAreaInComponent((JPanel) configPanel);
+                        }
+                    }
+                    if (errorStatusArea != null) {
+                        errorStatusArea.setText("System Status Information\n\n" +
                                                 "• Version Check: FAILED\n" +
                                                 "• Error: " + e.getMessage() + "\n" +
-                                                "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: BerserkiKun | GitHub");
+                                                "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: VermaOps | GitHub");
                     }
                 }
             }
@@ -480,11 +547,48 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
     }
 
     /**
+     * Recursively searches for a JTextArea that looks like the status panel
+     */
+    private JTextArea findStatusAreaInComponent(java.awt.Component component) {
+        if (component == null) return null;
+        
+        // Direct match
+        if (component instanceof JTextArea) {
+            JTextArea textArea = (JTextArea) component;
+            String text = textArea.getText();
+            if (text != null && text.contains("System Status Information")) {
+                return textArea;
+            }
+        }
+        
+        // Search children
+        if (component instanceof javax.swing.JPanel) {
+            javax.swing.JPanel panel = (javax.swing.JPanel) component;
+            for (java.awt.Component child : panel.getComponents()) {
+                JTextArea result = findStatusAreaInComponent(child);
+                if (result != null) return result;
+            }
+        } else if (component instanceof javax.swing.JScrollPane) {
+            javax.swing.JScrollPane scrollPane = (javax.swing.JScrollPane) component;
+            JTextArea result = findStatusAreaInComponent(scrollPane.getViewport().getView());
+            if (result != null) return result;
+        } else if (component instanceof javax.swing.JTabbedPane) {
+            javax.swing.JTabbedPane tabbedPane = (javax.swing.JTabbedPane) component;
+            for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+                JTextArea result = findStatusAreaInComponent(tabbedPane.getComponentAt(i));
+                if (result != null) return result;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
     * Opens GitHub releases page in default browser
     */
     private void openGitHubReleasesPage() {
         try {
-            String url = "https://github.com/BerserkiKun/apk-o-llama/releases";
+            String url = "https://github.com/VermaOps/apk-o-llama/releases";
             java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
             
             if (desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
@@ -539,7 +643,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         
         try {
             // GitHub API URL for releases
-            URL url = new URI("https://api.github.com/repos/BerserkiKun/apk-o-llama/releases/latest").toURL();
+            URL url = new URI("https://api.github.com/repos/VermaOps/apk-o-llama/releases/latest").toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(10000); // 10 second timeout
@@ -688,402 +792,543 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         
         return wrapper;
     }
-    
+
     private JPanel createConfigurationPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         
-        // Create main config panel with GridBagLayout for organized layout
-        JPanel configContent = new JPanel(new GridBagLayout());  // THIS panel uses GridBagLayout
+        Configuration config = Configuration.getInstance();
+        
+        JPanel configContent = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
         
         int row = 0;
         
-        // ========== OLLAMA CONFIGURATION SECTION ==========
+        // ========== AI PROVIDER CONFIGURATION SECTION ==========
         gbc.gridx = 0;
         gbc.gridy = row++;
         gbc.gridwidth = 2;
         gbc.anchor = GridBagConstraints.WEST;
-        JLabel ollamaLabel = new JLabel("Ollama Configuration");
-        ollamaLabel.setFont(ollamaLabel.getFont().deriveFont(Font.BOLD, 14f));
-        configContent.add(ollamaLabel, gbc);  // ← FIXED: add to configContent, not panel
+        JLabel providerLabel = new JLabel("AI Provider Configuration");
+        providerLabel.setFont(providerLabel.getFont().deriveFont(Font.BOLD, 14f));
+        configContent.add(providerLabel, gbc);
         
-        // Endpoint
+        // Provider dropdown
         gbc.gridwidth = 1;
         gbc.gridy = row++;
         gbc.gridx = 0;
-        configContent.add(new JLabel("Endpoint URL:"), gbc);  // ← FIXED
+        configContent.add(new JLabel("Provider:"), gbc);
         gbc.gridx = 1;
-        JTextField endpointField = new JTextField(ollamaClient.getEndpoint(), 30);
-        configContent.add(endpointField, gbc);  // ← FIXED
+        JComboBox<String> providerCombo = new JComboBox<>(new String[]{"Ollama", "OpenAI", "Claude"});
+        String currentProvider = config.getActiveProvider();
+        if ("openai".equalsIgnoreCase(currentProvider)) {
+            providerCombo.setSelectedItem("OpenAI");
+        } else if ("claude".equalsIgnoreCase(currentProvider)) {
+            providerCombo.setSelectedItem("Claude");
+        } else {
+            providerCombo.setSelectedItem("Ollama");
+        }
+        configContent.add(providerCombo, gbc);
         
-        // Model
+        // Endpoint URL field
         gbc.gridy = row++;
         gbc.gridx = 0;
-        configContent.add(new JLabel("Model:"), gbc);  // ← FIXED
+        configContent.add(new JLabel("Endpoint URL:"), gbc);
         gbc.gridx = 1;
-        JTextField modelField = new JTextField(ollamaClient.getModel(), 30);
-        configContent.add(modelField, gbc);  // ← FIXED
+        JTextField endpointField = new JTextField(getDefaultEndpointForProvider((String) providerCombo.getSelectedItem()), 40);
+        configContent.add(endpointField, gbc);
         
-        // Timeouts
+        // API Key field
         gbc.gridy = row++;
         gbc.gridx = 0;
-        configContent.add(new JLabel("Connect Timeout (ms):"), gbc);  // ← FIXED
+        configContent.add(new JLabel("API Key:"), gbc);
         gbc.gridx = 1;
-        JTextField connectTimeoutField = new JTextField(String.valueOf(ollamaClient.getConnectTimeout()), 10);
-        configContent.add(connectTimeoutField, gbc);  // ← FIXED
+        JPasswordField apiKeyField = new JPasswordField(40);
+        apiKeyField.setEnabled(!"Ollama".equals(providerCombo.getSelectedItem()));
+        updateApiKeyFieldValue(apiKeyField, (String) providerCombo.getSelectedItem(), config);
+        configContent.add(apiKeyField, gbc);
         
+        // Model field (manual input)
         gbc.gridy = row++;
         gbc.gridx = 0;
-        configContent.add(new JLabel("Read Timeout (ms):"), gbc);  // ← FIXED
+        configContent.add(new JLabel("Model:"), gbc);
         gbc.gridx = 1;
-        JTextField readTimeoutField = new JTextField(String.valueOf(ollamaClient.getReadTimeout()), 10);
-        configContent.add(readTimeoutField, gbc);  // ← FIXED
+        JTextField modelField = new JTextField(getDefaultModelForProvider((String) providerCombo.getSelectedItem(), config), 40);
+        configContent.add(modelField, gbc);
         
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        configContent.add(new JLabel("Max Tokens:"), gbc);  // ← FIXED
-        gbc.gridx = 1;
-        JTextField maxTokensField = new JTextField(String.valueOf(ollamaClient.getMaxTokens()), 10);
-        configContent.add(maxTokensField, gbc);  // ← FIXED
-        
-        // Test Connection Button
+        // Test Connection button
         gbc.gridy = row++;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.CENTER;
         JButton testButton = new JButton("Test Connection");
         JLabel testResultLabel = new JLabel(" ");
         testResultLabel.setForeground(new Color(0, 150, 0));
-        configContent.add(testButton, gbc);  // ← FIXED
+        JPanel testPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        testPanel.add(testButton);
+        testPanel.add(testResultLabel);
+        configContent.add(testPanel, gbc);
         
+        // System Status and Available Models panel (side by side)
         gbc.gridy = row++;
-        configContent.add(testResultLabel, gbc);  // ← FIXED
+        gbc.fill = GridBagConstraints.BOTH;
+        gbc.weightx = 1.0;
+        gbc.weighty = 0.4;
         
-        // ========== AVAILABLE MODELS & STATUS SECTION (SIDE BY SIDE) ==========
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.WEST;
-        gbc.insets = new Insets(15, 5, 5, 5);
-        JLabel modelsStatusLabel = new JLabel("System Status");
-        modelsStatusLabel.setFont(modelsStatusLabel.getFont().deriveFont(Font.BOLD, 14f));
-        configContent.add(modelsStatusLabel, gbc);
+        JPanel splitStatusPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        splitStatusPanel.setBorder(BorderFactory.createTitledBorder(
+            BorderFactory.createEtchedBorder(), 
+            "System Status",
+            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
+            javax.swing.border.TitledBorder.DEFAULT_POSITION
+        ));
+        
+        // Left side - Available Models (only for Ollama)
+        JPanel modelsPanel = new JPanel(new BorderLayout());
+        modelsPanel.setBorder(BorderFactory.createTitledBorder("Available Models"));
+        
+        DefaultListModel<String> modelListModel = new DefaultListModel<>();
+        JList<String> modelList = new JList<>(modelListModel);
+        modelList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        modelList.setVisibleRowCount(5);
+        modelList.setEnabled(false);
 
-        // Create a panel to hold both sections side by side
+        // Add mouse listener to populate selected model into model field
+        modelList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                String selectedModel = modelList.getSelectedValue();
+                if (selectedModel != null && modelField != null) {
+                    modelField.setText(selectedModel);
+                    modelField.setEditable(true);
+                }
+            }
+        });
+        
+        JScrollPane modelScrollPane = new JScrollPane(modelList);
+        modelsPanel.add(modelScrollPane, BorderLayout.CENTER);
+        
+        JLabel modelNoteLabel = new JLabel("Models appear here after successful connection test");
+        modelNoteLabel.setFont(modelNoteLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        modelNoteLabel.setForeground(Color.GRAY);
+        modelNoteLabel.setHorizontalAlignment(JLabel.CENTER);
+        modelsPanel.add(modelNoteLabel, BorderLayout.SOUTH);
+        
+        // Right side - Status
+        JPanel statusPanel = new JPanel(new BorderLayout());
+        statusPanel.setBorder(BorderFactory.createTitledBorder("Status"));
+        
+        JTextArea statusArea = new JTextArea();
+        statusArea.setEditable(false);
+        statusArea.setText("System Status Information\n\n• Connection: Not Tested\n• Last Check: Never\n\nSelect provider and click 'Test Connection'");
+        statusArea.setMargin(new Insets(10, 10, 10, 10));
+        statusArea.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        
+        // Store reference to class field for later updates
+        this.statusPlaceholder = statusArea;
+
+        JScrollPane statusScroll = new JScrollPane(statusArea);
+        statusPanel.add(statusScroll, BorderLayout.CENTER);
+        
+        splitStatusPanel.add(modelsPanel);
+        splitStatusPanel.add(statusPanel);
+        configContent.add(splitStatusPanel, gbc);
+        
+        // Reset weight
+        gbc.weighty = 0;
+        
+        // Store references for test connection
+        endpointField.putClientProperty("modelList", modelList);
+        endpointField.putClientProperty("modelListModel", modelListModel);
+        endpointField.putClientProperty("modelNoteLabel", modelNoteLabel);
+        endpointField.putClientProperty("statusArea", statusArea);
+        
+        // ========== PROVIDER CHANGE LISTENER ==========
+        providerCombo.addActionListener(e -> {
+            String selected = (String) providerCombo.getSelectedItem();
+            
+            endpointField.setText(getDefaultEndpointForProvider(selected));
+            apiKeyField.setText("");
+            apiKeyField.setEnabled(!"Ollama".equals(selected));
+            modelField.setText(getDefaultModelForProvider(selected, config));
+            
+            // Clear models panel and disable for non-Ollama providers
+            modelListModel.clear();
+            modelList.setEnabled(false);
+            if (!"Ollama".equals(selected)) {
+                modelNoteLabel.setText("Available models only for Ollama provider");
+                modelNoteLabel.setForeground(Color.GRAY);
+            } else {
+                modelNoteLabel.setText("Models appear here after successful connection test");
+                modelNoteLabel.setForeground(Color.GRAY);
+            }
+            
+            statusArea.setText("System Status Information\n\n• Connection: Not Tested\n• Last Check: Never\n\nSelect provider and click 'Test Connection'");
+            testResultLabel.setText(" ");
+        });
+        
+        // ========== TEST CONNECTION ACTION ==========
+        testButton.addActionListener(e -> {
+            String selected = (String) providerCombo.getSelectedItem();
+            String endpoint = endpointField.getText().trim();
+            String model = modelField.getText().trim();
+            String apiKey = new String(apiKeyField.getPassword());
+            
+            testResultLabel.setText("Testing...");
+            testResultLabel.setForeground(Color.BLACK);
+            statusArea.setText("Testing connection to " + selected + "...\nPlease wait...");
+            testButton.setEnabled(false);
+            
+            // Clear models
+            if ("Ollama".equals(selected)) {
+                modelListModel.clear();
+                modelList.setEnabled(false);
+                modelNoteLabel.setText("Fetching models...");
+            }
+            
+            // Run in background thread
+            new Thread(() -> {
+                boolean connected = false;
+                String error = null;
+                List<String> models = new ArrayList<>();
+                
+                try {
+                    // Test connection based on provider
+                    if ("Ollama".equals(selected)) {
+                        // Check if Ollama is running
+                        java.net.URL url = new java.net.URI(endpoint + "/api/tags").toURL();
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                        conn.setRequestMethod("GET");
+                        conn.setConnectTimeout(5000);
+                        conn.setReadTimeout(5000);
+                        int responseCode = conn.getResponseCode();
+                        conn.disconnect();
+                        
+                        if (responseCode == 200) {
+                            connected = true;
+                            // Fetch models
+                            models = fetchModels(endpoint);
+                        } else {
+                            error = "Ollama returned status " + responseCode;
+                        }
+                    } else if ("OpenAI".equals(selected)) {
+                        if (apiKey == null || apiKey.isEmpty()) {
+                            error = "API Key is required";
+                        } else {
+                            java.net.URL url = new java.net.URI(endpoint + "/v1/models").toURL();
+                            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                            conn.setRequestMethod("GET");
+                            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                            conn.setConnectTimeout(5000);
+                            conn.setReadTimeout(5000);
+                            int responseCode = conn.getResponseCode();
+                            conn.disconnect();
+                            
+                            if (responseCode == 200) {
+                                connected = true;
+                                models = fetchOpenAIModels(apiKey, endpoint);
+                            } else {
+                                error = "Invalid API Key or endpoint";
+                            }
+                        }
+                    } else if ("Claude".equals(selected)) {
+                        if (apiKey == null || apiKey.isEmpty()) {
+                            error = "API Key is required";
+                        } else {
+                            try {
+                                // Use GET to /v1/models (returns 404 but validates API key format)
+                                java.net.URL url = new java.net.URI(endpoint + "/v1/models").toURL();
+                                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                                conn.setRequestMethod("GET");
+                                conn.setRequestProperty("x-api-key", apiKey);
+                                conn.setRequestProperty("anthropic-version", "2023-06-01");
+                                conn.setConnectTimeout(5000);
+                                conn.setReadTimeout(5000);
+                                
+                                int responseCode = conn.getResponseCode();
+                                conn.disconnect();
+                                
+                                // Claude returns 404 for /v1/models, but that means the API key is valid
+                                // (invalid keys return 401)
+                                if (responseCode == 200) {
+                                    connected = true;
+                                    models = fetchClaudeModels(apiKey, endpoint);
+                                } else if (responseCode == 401) {
+                                    error = "Invalid API Key";
+                                } else {
+                                    error = "Connection failed (code: " + responseCode + ")";
+                                }
+                            } catch (Exception ex) {
+                                error = ex.getMessage();
+                            }
+                        }
+                    }
+                    
+                } catch (java.net.ConnectException ex) {
+                    error = "Cannot connect to " + endpoint + " - Service not running";
+                } catch (Exception ex) {
+                    error = ex.getMessage();
+                }
+                
+                // Update UI on EDT
+                final boolean finalConnected = connected;
+                final String finalError = error;
+                final List<String> finalModels = models;
+                
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    String currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+                    
+                    if (finalError != null) {
+                        testResultLabel.setText("✗ Error: " + finalError);
+                        testResultLabel.setForeground(Color.RED);
+                        statusArea.setText("System Status Information\n\n" +
+                            "• Provider: " + selected + "\n" +
+                            "• Connection: ✗ Failed\n" +
+                            "• Error: " + finalError + "\n" +
+                            "• Last Check: " + currentTime + "\n\n" +
+                            "Author: VermaOps | GitHub");
+                        if ("Ollama".equals(selected)) {
+                            modelNoteLabel.setText("Failed to fetch models");
+                            modelNoteLabel.setForeground(Color.RED);
+                        }
+                    } else if (finalConnected) {
+                        testResultLabel.setText("✓ Connection successful!");
+                        testResultLabel.setForeground(new Color(0, 150, 0));
+                        statusArea.setText("System Status Information\n\n" +
+                            "• Provider: " + selected + "\n" +
+                            "• Connection: ✓ Connected\n" +
+                            "• Endpoint: " + endpoint + "\n" +
+                            "• Model: " + model + "\n" +
+                            "• Last Check: " + currentTime + "\n\n" +
+                            "Author: VermaOps | GitHub");
+                        
+                        if (finalModels != null && !finalModels.isEmpty()) {
+                            for (String m : finalModels) {
+                                modelListModel.addElement(m);
+                            }
+                            modelList.setEnabled(true);
+                            modelNoteLabel.setText(finalModels.size() + " model(s) available - Click to populate");
+                            modelNoteLabel.setForeground(new Color(0, 100, 0));
+                        } else if ("Ollama".equals(selected)) {
+                            modelNoteLabel.setText("No models installed. Run 'ollama pull <model>'");
+                            modelNoteLabel.setForeground(new Color(200, 100, 0));
+                        }
+                    } else {
+                        testResultLabel.setText("✗ Connection failed");
+                        testResultLabel.setForeground(Color.RED);
+                        statusArea.setText("System Status Information\n\n" +
+                            "• Provider: " + selected + "\n" +
+                            "• Connection: ✗ Failed\n" +
+                            "• Endpoint: " + endpoint + "\n" +
+                            "• Last Check: " + currentTime + "\n\n" +
+                            "Author: VermaOps | GitHub");
+                        if ("Ollama".equals(selected)) {
+                            modelNoteLabel.setText("Connect to see available models");
+                            modelNoteLabel.setForeground(Color.GRAY);
+                        }
+                    }
+                    
+                    testButton.setEnabled(true);
+                });
+            }).start();
+        });
+        
+        // ========== NEW TWO-COLUMN ROW: SCAN CONFIGURATION | ADVANCED SETTINGS ==========
         gbc.gridy = row++;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
         gbc.fill = GridBagConstraints.BOTH;
         gbc.weightx = 1.0;
         gbc.weighty = 0.3;
-        gbc.insets = new Insets(5, 5, 5, 5);
-
-        JPanel dualPanel = new JPanel(new GridLayout(1, 2, 10, 0)); // 1 row, 2 columns, 10px horizontal gap
-
-        // LEFT PANEL - Available Models
-        JPanel modelsPanel = new JPanel(new BorderLayout());
-        modelsPanel.setBorder(BorderFactory.createTitledBorder(
-            BorderFactory.createEtchedBorder(), 
-            "Available Models",
-            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
-            javax.swing.border.TitledBorder.DEFAULT_POSITION,
-            new Font("SansSerif", Font.BOLD, 12)
-        ));
-
-        modelListModel = new DefaultListModel<>();
-        modelList = new JList<>(modelListModel);
-        modelList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        modelList.setVisibleRowCount(5);
-        modelList.setEnabled(false); // Initially disabled
-
-        JScrollPane modelScrollPane = new JScrollPane(modelList);
-        modelsPanel.add(modelScrollPane, BorderLayout.CENTER);
-
-        // Add note inside models panel
-        JLabel modelNoteLabel = new JLabel("Models appear here after successful connection test");
-        modelNoteLabel.setFont(modelNoteLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        modelNoteLabel.setForeground(Color.GRAY);
-        modelNoteLabel.setHorizontalAlignment(JLabel.CENTER);
-        modelsPanel.add(modelNoteLabel, BorderLayout.SOUTH);
-
-        // RIGHT PANEL - Status
-        JPanel statusPanel = new JPanel(new BorderLayout());
-        statusPanel.setBorder(BorderFactory.createTitledBorder(
-            BorderFactory.createEtchedBorder(), 
-            "Status",
-            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
-            javax.swing.border.TitledBorder.DEFAULT_POSITION,
-            new Font("SansSerif", Font.BOLD, 12)
-        ));
-
-        // Placeholder content for Status panel
-        statusPlaceholder = new JTextArea();
-        statusPlaceholder.setEditable(false);
-        //statusPlaceholder.setBackground(new Color(245, 245, 245));
-        statusPlaceholder.setText("System Status Information\n\n" +
-                                "• Ollama Connection: Not Tested\n" +
-                                "• Model Status: Not Loaded\n" +
-                                "• Last Check: Never\n\n" +
-                                "Click 'Test Connection' to update status.\n\nAuthor: BerserkiKun | GitHub");
-        statusPlaceholder.setMargin(new Insets(10, 10, 10, 10));
-        statusPlaceholder.setFont(new Font("Monospaced", Font.PLAIN, 11));
-
-        JScrollPane statusScrollPane = new JScrollPane(statusPlaceholder);
-        statusPanel.add(statusScrollPane, BorderLayout.CENTER);
-
-        // Add both panels to the dual panel
-        dualPanel.add(modelsPanel);
-        dualPanel.add(statusPanel);
-
-        // Add the dual panel to the main config content
-        configContent.add(dualPanel, gbc);
-
-        // Reset gridbag constraints for remaining components
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.weightx = 0;
+        
+        JPanel twoColumnRow = new JPanel(new GridLayout(1, 2, 10, 0));
+        
+        // LEFT COLUMN: Scan Configuration
+        JPanel scanConfigPanel = new JPanel(new GridBagLayout());
+        scanConfigPanel.setBorder(BorderFactory.createTitledBorder("Scan Configuration"));
+        GridBagConstraints scanGbc = new GridBagConstraints();
+        scanGbc.fill = GridBagConstraints.HORIZONTAL;
+        scanGbc.insets = new Insets(5, 5, 5, 5);
+        scanGbc.gridx = 0;
+        scanGbc.gridy = 0;
+        scanGbc.gridwidth = 1;
+        
+        // Scan binary files
+        JCheckBox scanBinaryCheck = new JCheckBox("Scan binary files", config.isScanBinaryFiles());
+        scanConfigPanel.add(scanBinaryCheck, scanGbc);
+        scanGbc.gridy++;
+        
+        // Enable entropy detection
+        JCheckBox entropyCheck = new JCheckBox("Enable entropy-based detection", config.isEntropyDetectionEnabled());
+        scanConfigPanel.add(entropyCheck, scanGbc);
+        scanGbc.gridy++;
+        
+        // Scan comments for secrets
+        JCheckBox scanCommentsCheck = new JCheckBox("Scan comments for secrets", config.isScanComments());
+        scanConfigPanel.add(scanCommentsCheck, scanGbc);
+        scanGbc.gridy++;
+        
+        // Flag keywords inside string literals
+        JCheckBox flagStringLiteralsCheck = new JCheckBox("Flag keywords inside string literals", config.isFlagStringLiterals());
+        scanConfigPanel.add(flagStringLiteralsCheck, scanGbc);
+        scanGbc.gridy++;
+        
+        // String literal severity dropdown
+        JPanel severityPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        severityPanel.add(new JLabel("String literal severity:"));
+        JComboBox<String> severityCombo = new JComboBox<>(new String[]{"LOW", "MEDIUM", "HIGH", "INFO"});
+        severityCombo.setSelectedItem(config.getStringLiteralSeverity().getDisplayName());
+        severityPanel.add(severityCombo);
+        scanConfigPanel.add(severityPanel, scanGbc);
+        scanGbc.gridy++;
+        
+        // Debug mode
+        JCheckBox debugModeCheck = new JCheckBox("Debug mode (verbose output)", config.isDebugMode());
+        scanConfigPanel.add(debugModeCheck, scanGbc);
+        
+        // RIGHT COLUMN: Advanced Settings
+        JPanel advancedPanel = new JPanel(new GridBagLayout());
+        advancedPanel.setBorder(BorderFactory.createTitledBorder("Advanced Settings"));
+        GridBagConstraints advGbc = new GridBagConstraints();
+        advGbc.fill = GridBagConstraints.HORIZONTAL;
+        advGbc.insets = new Insets(5, 5, 5, 5);
+        advGbc.gridx = 0;
+        advGbc.gridy = 0;
+        advGbc.gridwidth = 1;
+        
+        // Max File Size
+        advGbc.gridx = 0;
+        advancedPanel.add(new JLabel("Max File Size (MB):"), advGbc);
+        advGbc.gridx = 1;
+        JTextField maxSizeField = new JTextField(String.valueOf(config.getMaxFileSizeMB()), 10);
+        advancedPanel.add(maxSizeField, advGbc);
+        advGbc.gridy++;
+        
+        // Entropy Threshold
+        advGbc.gridx = 0;
+        advancedPanel.add(new JLabel("Entropy Threshold:"), advGbc);
+        advGbc.gridx = 1;
+        JTextField entropyField = new JTextField(String.valueOf(config.getEntropyThreshold()), 10);
+        advancedPanel.add(entropyField, advGbc);
+        advGbc.gridy++;
+        
+        // Max Tokens
+        advGbc.gridx = 0;
+        advancedPanel.add(new JLabel("Max Tokens:"), advGbc);
+        advGbc.gridx = 1;
+        JTextField maxTokensField = new JTextField(String.valueOf(config.getMaxTokens()), 10);
+        advancedPanel.add(maxTokensField, advGbc);
+        advGbc.gridy++;
+        
+        // Connect Timeout
+        advGbc.gridx = 0;
+        advancedPanel.add(new JLabel("Connect Timeout (ms):"), advGbc);
+        advGbc.gridx = 1;
+        JTextField connectTimeoutField = new JTextField(String.valueOf(config.getConnectTimeout()), 10);
+        advancedPanel.add(connectTimeoutField, advGbc);
+        advGbc.gridy++;
+        
+        // Read Timeout
+        advGbc.gridx = 0;
+        advancedPanel.add(new JLabel("Read Timeout (ms):"), advGbc);
+        advGbc.gridx = 1;
+        JTextField readTimeoutField = new JTextField(String.valueOf(config.getReadTimeout()), 10);
+        advancedPanel.add(readTimeoutField, advGbc);
+        
+        twoColumnRow.add(scanConfigPanel);
+        twoColumnRow.add(advancedPanel);
+        configContent.add(twoColumnRow, gbc);
+        
+        // Reset weight
         gbc.weighty = 0;
-
-        // Reset gridbag constraints for remaining components
-        gbc.weightx = 0;
-        gbc.weighty = 0;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(5, 5, 5, 5);
-
-        // ========== SCAN CONFIGURATION SECTION ==========
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.WEST;
-        JLabel scanLabel = new JLabel("Scan Configuration");
-        scanLabel.setFont(scanLabel.getFont().deriveFont(Font.BOLD, 14f));
-        configContent.add(scanLabel, gbc);  // ← FIXED
         
-        // Entropy threshold
-        gbc.gridwidth = 1;
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        configContent.add(new JLabel("Entropy Threshold:"), gbc);  // ← FIXED
-        gbc.gridx = 1;
-        JTextField entropyField = new JTextField("4.5", 10);
-        configContent.add(entropyField, gbc);  // ← FIXED
-        
-        // Max file size to scan
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        configContent.add(new JLabel("Max File Size (MB):"), gbc);  // ← FIXED
-        gbc.gridx = 1;
-        JTextField maxSizeField = new JTextField("10", 10);
-        configContent.add(maxSizeField, gbc);  // ← FIXED
-        
-        // Checkboxes for scan options
-        gbc.gridy = row++;
-        gbc.gridx = 0;
-        gbc.gridwidth = 2;
-        JCheckBox scanBinaryCheck = new JCheckBox("Scan binary files", true);
-        configContent.add(scanBinaryCheck, gbc);  // ← FIXED
-        
-        gbc.gridy = row++;
-        JCheckBox entropyCheck = new JCheckBox("Enable entropy-based detection", true);
-        configContent.add(entropyCheck, gbc);  // ← FIXED
-        
-        gbc.gridy = row++;
-        JCheckBox debugModeCheck = new JCheckBox("Debug mode (verbose output)", false);
-        configContent.add(debugModeCheck, gbc);  // ← FIXED
-        
-        // ========== LOAD CONFIGURATION VALUES ==========
-        Configuration config = Configuration.getInstance();
-
-        endpointField.setText(config.getOllamaEndpoint());
-        modelField.setText(config.getOllamaModel());
-        connectTimeoutField.setText(String.valueOf(config.getConnectTimeout()));
-        readTimeoutField.setText(String.valueOf(config.getReadTimeout()));
-        maxTokensField.setText(String.valueOf(config.getMaxTokens()));
-        entropyField.setText(String.valueOf(config.getEntropyThreshold()));
-        maxSizeField.setText(String.valueOf(config.getMaxFileSizeMB()));
-        scanBinaryCheck.setSelected(config.isScanBinaryFiles());
-        entropyCheck.setSelected(config.isEntropyDetectionEnabled());
-        debugModeCheck.setSelected(config.isDebugMode());
-
         // ========== SAVE BUTTON ==========
         gbc.gridy = row++;
+        gbc.gridx = 0;
+        gbc.gridwidth = 2;
         gbc.insets = new Insets(20, 5, 5, 5);
         JButton saveButton = new JButton("Save Configuration");
         saveButton.setFont(saveButton.getFont().deriveFont(Font.BOLD));
-        configContent.add(saveButton, gbc);  // ← FIXED
+        configContent.add(saveButton, gbc);
         
-        // Wrap in scroll pane and add to main panel
-        JScrollPane scrollPane = new JScrollPane(configContent);
-        scrollPane.setBorder(BorderFactory.createEmptyBorder());
-        panel.add(scrollPane, BorderLayout.CENTER);  // ← This is correct - panel uses BorderLayout
-        
-        // Add action listeners (these remain the same)
-        testButton.addActionListener(e -> {
-            testResultLabel.setText("Testing...");
-            testResultLabel.setForeground(Color.BLACK);
-            
-            // Clear previous model list
-            modelListModel.clear();
-            modelList.setEnabled(false);
-            
-            // Update status panel - Testing in progress
-            if (statusPlaceholder != null) {
-                statusPlaceholder.setText("System Status Information\n\n" +
-                                        "• Testing connection to Ollama...\n" +
-                                        "• Please wait...\n" +
-                                        "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: BerserkiKun | GitHub");
-            }
-            
-            SwingWorker<ModelsResult, Void> worker = new SwingWorker<>() {
-                @Override
-                protected ModelsResult doInBackground() {
-                    ModelsResult result = new ModelsResult();
-                    try {
-                        // Use current field values
-                        OllamaClient testClient = new OllamaClient(
-                            endpointField.getText().trim(),
-                            modelField.getText().trim()
-                        );
-                        
-                        // Check connection
-                        result.connected = testClient.isAvailable();
-                        
-                        if (result.connected) {
-                            // Fetch models using a direct HTTP call to /api/tags
-                            result.models = fetchModels(endpointField.getText().trim());
-                        }
-                    } catch (Exception ex) {
-                        result.error = ex.getMessage();
-                    }
-                    return result;
-                }
-                
-                @Override
-                protected void done() {
-                    try {
-                        ModelsResult result = get();
-                        String currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-                        
-                        if (result.error != null) {
-                            testResultLabel.setText("✗ Error: " + result.error);
-                            testResultLabel.setForeground(Color.RED);
-                            modelNoteLabel.setText("Failed to fetch models");
-                            
-                            // Update status panel with error
-                            if (statusPlaceholder != null) {
-                                statusPlaceholder.setText("System Status Information\n\n" +
-                                                        "• Ollama Connection: ✗ Failed\n" +
-                                                        "• Error: " + result.error + "\n" +
-                                                        "• Last Check: " + currentTime + "\n\n" +
-                                                        "Click 'Test Connection' to update status." + "\n\nAuthor: BerserkiKun | GitHub");
-                            }
-                            
-                        } else if (result.connected) {
-                            testResultLabel.setText("✓ Connection successful!");
-                            testResultLabel.setForeground(new Color(0, 150, 0));
-                            
-                            if (result.models != null && !result.models.isEmpty()) {
-                                // Populate model list
-                                for (String model : result.models) {
-                                    modelListModel.addElement(model);
-                                }
-                                modelList.setEnabled(true);
-                                modelNoteLabel.setText(result.models.size() + " model(s) available");
-                                
-                                // Update status panel with success and models
-                                if (statusPlaceholder != null) {
-                                    statusPlaceholder.setText("System Status Information\n\n" +
-                                                            "• Ollama Connection: ✓ Connected\n" +
-                                                            "• Model Status: " + result.models.size() + " model(s) loaded\n" +
-                                                            "• Last Check: " + currentTime + "\n\n" +
-                                                            "Click 'Test Connection' to update status." + "\n\nAuthor: BerserkiKun | GitHub");
-                                }
-                            } else {
-                                modelNoteLabel.setText("No models installed. Run 'ollama pull <model>'");
-                                modelNoteLabel.setForeground(new Color(200, 100, 0)); // Orange warning
-                                
-                                // Update status panel with success but no models
-                                if (statusPlaceholder != null) {
-                                    statusPlaceholder.setText("System Status Information\n\n" +
-                                                            "• Ollama Connection: ✓ Connected\n" +
-                                                            "• Model Status: No models installed\n" +
-                                                            "• Last Check: " + currentTime + "\n\n" +
-                                                            "Click 'Test Connection' to update status." + "\n\nAuthor: BerserkiKun | GitHub");
-                                }
-                            }
-                        } else {
-                            testResultLabel.setText("✗ Connection failed - Check if Ollama is running");
-                            testResultLabel.setForeground(Color.RED);
-                            modelNoteLabel.setText("Connect to see available models");
-                            
-                            // Update status panel with failure
-                            if (statusPlaceholder != null) {
-                                statusPlaceholder.setText("System Status Information\n\n" +
-                                                        "• Ollama Connection: ✗ Failed\n" +
-                                                        "• Model Status: Not Loaded\n" +
-                                                        "• Last Check: " + currentTime + "\n\n" +
-                                                        "Click 'Test Connection' to update status." + "\n\nAuthor: BerserkiKun | GitHub");
-                            }
-                        }
-                    } catch (Exception ex) {
-                        testResultLabel.setText("✗ Error: " + ex.getMessage());
-                        testResultLabel.setForeground(Color.RED);
-                        modelNoteLabel.setText("Failed to load models");
-                        
-                        // Update status panel with exception
-                        if (statusPlaceholder != null) {
-                            statusPlaceholder.setText("System Status Information\n\n" +
-                                                    "• Ollama Connection: ✗ Error\n" +
-                                                    "• Error: " + ex.getMessage() + "\n" +
-                                                    "• Last Check: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\n" +
-                                                    "Click 'Test Connection' to update status." + "\n\nAuthor: BerserkiKun | GitHub");
-                        }
-                    }
-                }
-            };
-            worker.execute();
-        });
-
         saveButton.addActionListener(e -> {
-            // Validate inputs
             try {
-                String newEndpoint = endpointField.getText().trim();
-                String newModel = modelField.getText().trim();
-                int newConnectTimeout = Integer.parseInt(connectTimeoutField.getText().trim());
-                int newReadTimeout = Integer.parseInt(readTimeoutField.getText().trim());
-                int newMaxTokens = Integer.parseInt(maxTokensField.getText().trim());
-                double newEntropyThreshold = Double.parseDouble(entropyField.getText().trim());
-                int newMaxFileSize = Integer.parseInt(maxSizeField.getText().trim());
-                boolean newScanBinary = scanBinaryCheck.isSelected();
-                boolean newEntropyEnabled = entropyCheck.isSelected();
-                boolean newDebugMode = debugModeCheck.isSelected();
+                String selected = (String) providerCombo.getSelectedItem();
+                String endpoint = endpointField.getText().trim();
+                String apiKey = new String(apiKeyField.getPassword());
+                String model = modelField.getText().trim();
                 
-                // Update configuration model
-                config.setOllamaEndpoint(newEndpoint);
-                config.setOllamaModel(newModel);
-                config.setConnectTimeout(newConnectTimeout);
-                config.setReadTimeout(newReadTimeout);
-                config.setMaxTokens(newMaxTokens);
-                config.setEntropyThreshold(newEntropyThreshold);
-                config.setMaxFileSizeMB(newMaxFileSize);
-                config.setScanBinaryFiles(newScanBinary);
-                config.setEntropyDetectionEnabled(newEntropyEnabled);
-                config.setDebugMode(newDebugMode);
+                // Save provider selection
+                if ("OpenAI".equals(selected)) {
+                    config.setActiveProvider("openai");
+                } else if ("Claude".equals(selected)) {
+                    config.setActiveProvider("claude");
+                } else {
+                    config.setActiveProvider("ollama");
+                }
                 
-                // Save to file
+                // Save endpoint
+                if ("ollama".equals(config.getActiveProvider())) {
+                    config.setOllamaEndpoint(endpoint);
+                } else if ("openai".equals(config.getActiveProvider())) {
+                    config.setOpenAIBaseUrl(endpoint);
+                } else if ("claude".equals(config.getActiveProvider())) {
+                    config.setClaudeBaseUrl(endpoint);
+                }
+                
+                // Save API key
+                if ("openai".equals(config.getActiveProvider())) {
+                    config.setOpenAIKey(apiKey);
+                } else if ("claude".equals(config.getActiveProvider())) {
+                    config.setClaudeKey(apiKey);
+                } else {
+                    config.setOllamaApiKey(apiKey);
+                }
+                
+                // Save model
+                config.setOllamaModel(model);
+                config.setOpenAIModel(model);
+                config.setClaudeModel(model);
+                
+                // Save scan settings
+                config.setMaxFileSizeMB(Integer.parseInt(maxSizeField.getText().trim()));
+                config.setEntropyThreshold(Double.parseDouble(entropyField.getText().trim()));
+                config.setScanBinaryFiles(scanBinaryCheck.isSelected());
+                config.setEntropyDetectionEnabled(entropyCheck.isSelected());
+                config.setScanComments(scanCommentsCheck.isSelected());
+                config.setFlagStringLiterals(flagStringLiteralsCheck.isSelected());
+                config.setStringLiteralSeverity((String) severityCombo.getSelectedItem());
+                config.setDebugMode(debugModeCheck.isSelected());
+                
+                // Save advanced settings
+                config.setMaxTokens(Integer.parseInt(maxTokensField.getText().trim()));
+                config.setConnectTimeout(Integer.parseInt(connectTimeoutField.getText().trim()));
+                config.setReadTimeout(Integer.parseInt(readTimeoutField.getText().trim()));
+                
                 config.saveToFile();
                 
-                // Create new client with updated settings
-                ollamaClient = new OllamaClient(
-                    newEndpoint, newModel, 
-                    newConnectTimeout, newReadTimeout, newMaxTokens
-                );
+                // Recreate AI provider
+                aiProvider = AIProviderFactory.createProvider(config);
+                requestManager = new OllamaRequestManager(aiProvider);
+                requestManager.addStatusUpdateListener(MainTab.this);
                 
-                // Update request manager
-                requestManager = new OllamaRequestManager(ollamaClient);
-                requestManager.addStatusUpdateListener(this);
+                // Update Status panel with the saved model information
+                if (statusArea != null) {
+                    String currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+                    String providerName = (String) providerCombo.getSelectedItem();
+                    // Using existing 'endpoint' variable declared above - NO NEW DECLARATION
+                    String savedModel = modelField.getText().trim();
+                    
+                    statusArea.setText("System Status Information\n\n" +
+                        "• Provider: " + providerName + "\n" +
+                        "• Connection: ✓ Configured\n" +
+                        "• Endpoint: " + endpoint + "\n" +
+                        "• Model: " + savedModel + "\n" +
+                        "• Status: Ready for AI calls\n" +
+                        "• Last Saved: " + currentTime + "\n\n" +
+                        "Click 'Test Connection' to verify connectivity.\n\nAuthor: VermaOps | GitHub");
+                }
                 
                 JOptionPane.showMessageDialog(panel, 
                     "Configuration saved successfully!\nSettings will apply to next scan and AI requests.", 
@@ -1092,15 +1337,79 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                     
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(panel, 
-                    "Invalid number format in fields", 
+                    "Invalid number format: " + ex.getMessage(), 
+                    "Error", 
+                    JOptionPane.ERROR_MESSAGE);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(panel, 
+                    "Error saving configuration: " + ex.getMessage(), 
                     "Error", 
                     JOptionPane.ERROR_MESSAGE);
             }
         });
         
+        JScrollPane scrollPane = new JScrollPane(configContent);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        panel.add(scrollPane, BorderLayout.CENTER);
+        
         return panel;
     }
 
+    private String getDefaultEndpointForProvider(String provider) {
+        switch (provider) {
+            case "OpenAI": return "https://api.openai.com";
+            case "Claude": return "https://api.anthropic.com";
+            default: return "http://localhost:11434";
+        }
+    }
+
+    private String getDefaultModelForProvider(String provider, Configuration config) {
+        switch (provider) {
+            case "OpenAI": 
+                String openaiModel = config.getOpenAIModel();
+                return (openaiModel != null && !openaiModel.isEmpty()) ? openaiModel : "gpt-3.5-turbo";
+            case "Claude": 
+                String claudeModel = config.getClaudeModel();
+                return (claudeModel != null && !claudeModel.isEmpty()) ? claudeModel : "claude-3-sonnet-20240229";
+            default: 
+                String ollamaModel = config.getOllamaModel();
+                return (ollamaModel != null && !ollamaModel.isEmpty()) ? ollamaModel : "qwen2.5-coder:7b";
+        }
+    }
+
+    private void updateApiKeyFieldValue(JPasswordField field, String provider, Configuration config) {
+        if ("OpenAI".equals(provider) && config.getOpenAIKey() != null) {
+            field.setText(config.getOpenAIKey());
+        } else if ("Claude".equals(provider) && config.getClaudeKey() != null) {
+            field.setText(config.getClaudeKey());
+        } else {
+            field.setText("");
+        }
+    }
+
+    private AIProvider createTestProvider(String provider, String endpoint, String model, String apiKey) throws Exception {
+        Configuration tempConfig = Configuration.getInstance();
+        switch (provider) {
+            case "OpenAI":
+                return new OpenAIProvider(apiKey, endpoint, model, 
+                    tempConfig.getConnectTimeout(), tempConfig.getReadTimeout(), tempConfig.getMaxTokens());
+            case "Claude":
+                return new ClaudeProvider(apiKey, endpoint, model,
+                    tempConfig.getConnectTimeout(), tempConfig.getReadTimeout(), tempConfig.getMaxTokens());
+            default:
+                return new OllamaProvider(endpoint, model,
+                    tempConfig.getConnectTimeout(), tempConfig.getReadTimeout(), tempConfig.getMaxTokens());
+        }
+    }
+
+    // Inner class for models result
+    private static class ModelsResult {
+        boolean connected = false;
+        List<String> models = null;
+        String error = null;
+    }
+
+    // fetchModels method (keep existing implementation)
     private List<String> fetchModels(String endpoint) throws Exception {
         List<String> models = new ArrayList<>();
         
@@ -1121,9 +1430,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                     }
                 }
                 
-                // Simple JSON parsing - extract model names
                 String json = response.toString();
-                // Look for "name":"modelname" patterns
                 java.util.regex.Pattern pattern = 
                     java.util.regex.Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"");
                 java.util.regex.Matcher matcher = pattern.matcher(json);
@@ -1139,10 +1446,355 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         return models;
     }
 
-    private static class ModelsResult {
-        boolean connected = false;
-        List<String> models = null;
-        String error = null;
+    private List<String> fetchOpenAIModels(String apiKey, String baseUrl) throws Exception {
+        List<String> models = new ArrayList<>();
+        
+        URL url = new URI(baseUrl + "/v1/models").toURL();
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+        
+        try {
+            if (conn.getResponseCode() == 200) {
+                StringBuilder response = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        response.append(line);
+                    }
+                }
+                
+                String json = response.toString();
+                Pattern pattern = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+                Matcher matcher = pattern.matcher(json);
+                
+                while (matcher.find()) {
+                    String modelId = matcher.group(1);
+                    // Filter to chat models only (GPT series)
+                    if (modelId.startsWith("gpt-")) {
+                        models.add(modelId);
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect();
+        }
+        
+        return models;
+    }
+    
+    private List<String> fetchClaudeModels(String apiKey, String baseUrl) throws Exception {
+        List<String> models = new ArrayList<>();
+        
+        // Use the correct Models API endpoint
+        URL url = new URI(baseUrl + "/v1/models").toURL();
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("x-api-key", apiKey);
+        conn.setRequestProperty("anthropic-version", "2023-06-01");
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(10000);
+        
+        int responseCode = conn.getResponseCode();
+        
+        if (responseCode == 200) {
+            StringBuilder response = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    response.append(line);
+                }
+            }
+            
+            // Parse JSON response to extract model IDs
+            String json = response.toString();
+            Pattern pattern = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+            Matcher matcher = pattern.matcher(json);
+            
+            while (matcher.find()) {
+                String modelId = matcher.group(1);
+                // Filter out any non-model entries if needed
+                if (!modelId.startsWith("claude-")) {
+                    continue;
+                }
+                models.add(modelId);
+            }
+        } else if (responseCode == 401) {
+            throw new Exception("Invalid API Key");
+        } else {
+            throw new Exception("Failed to fetch models (HTTP " + responseCode + ")");
+        }
+        
+        conn.disconnect();
+        return models;
+    }
+
+    private JPanel createOllamaModelsStatusPanel(JTextField endpointField, JButton testButton, JLabel testResultLabel) {
+        JPanel container = new JPanel(new GridLayout(1, 2, 10, 0));
+        container.setBorder(BorderFactory.createTitledBorder(
+            BorderFactory.createEtchedBorder(), 
+            "System Status",
+            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
+            javax.swing.border.TitledBorder.DEFAULT_POSITION
+        ));
+        
+        // Left side - Available Models
+        JPanel modelsPanel = new JPanel(new BorderLayout());
+        modelsPanel.setBorder(BorderFactory.createTitledBorder("Available Models"));
+        
+        DefaultListModel<String> modelListModel = new DefaultListModel<>();
+        JList<String> modelList = new JList<>(modelListModel);
+        modelList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        modelList.setVisibleRowCount(5);
+        modelList.setEnabled(false);
+        
+        JScrollPane modelScrollPane = new JScrollPane(modelList);
+        modelsPanel.add(modelScrollPane, BorderLayout.CENTER);
+        
+        JLabel modelNoteLabel = new JLabel("Models appear here after successful connection test");
+        modelNoteLabel.setFont(modelNoteLabel.getFont().deriveFont(Font.ITALIC, 11f));
+        modelNoteLabel.setForeground(Color.GRAY);
+        modelNoteLabel.setHorizontalAlignment(JLabel.CENTER);
+        modelsPanel.add(modelNoteLabel, BorderLayout.SOUTH);
+        
+        // Right side - Status
+        JPanel statusPanel = new JPanel(new BorderLayout());
+        statusPanel.setBorder(BorderFactory.createTitledBorder("Status"));
+        
+        JTextArea statusPlaceholder = new JTextArea();
+        statusPlaceholder.setEditable(false);
+        statusPlaceholder.setText("System Status Information\n\n" +
+                                "• Ollama Connection: Not Tested\n" +
+                                "• Model Status: Not Loaded\n" +
+                                "• Last Check: Never\n\n" +
+                                "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+        statusPlaceholder.setMargin(new Insets(10, 10, 10, 10));
+        statusPlaceholder.setFont(new Font("Monospaced", Font.PLAIN, 11));
+        
+        // Store reference to class field
+        this.statusPlaceholder = statusPlaceholder;
+
+        JScrollPane statusScrollPane = new JScrollPane(statusPlaceholder);
+        statusPanel.add(statusScrollPane, BorderLayout.CENTER);
+        
+        container.add(modelsPanel);
+        container.add(statusPanel);
+        
+        // Store references for test connection
+        endpointField.putClientProperty("modelList", modelList);
+        endpointField.putClientProperty("modelListModel", modelListModel);
+        endpointField.putClientProperty("modelNoteLabel", modelNoteLabel);
+        endpointField.putClientProperty("statusPlaceholder", statusPlaceholder);
+        
+        // Enhanced test connection logic
+        testButton.addActionListener(e -> {
+            testResultLabel.setText("Testing...");
+            testResultLabel.setForeground(Color.BLACK);
+            
+            modelListModel.clear();
+            modelList.setEnabled(false);
+            
+            if (statusPlaceholder != null) {
+                statusPlaceholder.setText("System Status Information\n\n" +
+                                        "• Testing connection to Ollama...\n" +
+                                        "• Please wait...\n" +
+                                        "• Time: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\nAuthor: VermaOps | GitHub");
+            }
+            
+            SwingWorker<ModelsResult, Void> worker = new SwingWorker<>() {
+                @Override
+                protected ModelsResult doInBackground() {
+                    ModelsResult result = new ModelsResult();
+                    try {
+                        OllamaProvider testClient = new OllamaProvider(
+                            endpointField.getText().trim(),
+                            "test-model"
+                        );
+                        
+                        result.connected = testClient.isAvailable();
+                        
+                        if (result.connected) {
+                            result.models = fetchModels(endpointField.getText().trim());
+                        }
+                    } catch (Exception ex) {
+                        result.error = ex.getMessage();
+                    }
+                    return result;
+                }
+                
+                @Override
+                protected void done() {
+                    try {
+                        ModelsResult result = get();
+                        String currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+                        
+                        if (result.error != null) {
+                            testResultLabel.setText("✗ Error: " + result.error);
+                            testResultLabel.setForeground(Color.RED);
+                            modelNoteLabel.setText("Failed to fetch models");
+                            
+                            if (statusPlaceholder != null) {
+                                statusPlaceholder.setText("System Status Information\n\n" +
+                                                        "• Ollama Connection: ✗ Failed\n" +
+                                                        "• Error: " + result.error + "\n" +
+                                                        "• Last Check: " + currentTime + "\n\n" +
+                                                        "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+                            }
+                        } else if (result.connected) {
+                            testResultLabel.setText("✓ Connection successful!");
+                            testResultLabel.setForeground(new Color(0, 150, 0));
+                            
+                            if (result.models != null && !result.models.isEmpty()) {
+                                for (String model : result.models) {
+                                    modelListModel.addElement(model);
+                                }
+                                modelList.setEnabled(true);
+                                modelNoteLabel.setText(result.models.size() + " model(s) available");
+                                
+                                if (statusPlaceholder != null) {
+                                    statusPlaceholder.setText("System Status Information\n\n" +
+                                                            "• Ollama Connection: ✓ Connected\n" +
+                                                            "• Model Status: " + result.models.size() + " model(s) loaded\n" +
+                                                            "• Last Check: " + currentTime + "\n\n" +
+                                                            "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+                                }
+                            } else {
+                                modelNoteLabel.setText("No models installed. Run 'ollama pull <model>'");
+                                modelNoteLabel.setForeground(new Color(200, 100, 0));
+                                
+                                if (statusPlaceholder != null) {
+                                    statusPlaceholder.setText("System Status Information\n\n" +
+                                                            "• Ollama Connection: ✓ Connected\n" +
+                                                            "• Model Status: No models installed\n" +
+                                                            "• Last Check: " + currentTime + "\n\n" +
+                                                            "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+                                }
+                            }
+                        } else {
+                            testResultLabel.setText("✗ Connection failed - Check if Ollama is running");
+                            testResultLabel.setForeground(Color.RED);
+                            modelNoteLabel.setText("Connect to see available models");
+                            
+                            if (statusPlaceholder != null) {
+                                statusPlaceholder.setText("System Status Information\n\n" +
+                                                        "• Ollama Connection: ✗ Failed\n" +
+                                                        "• Model Status: Not Loaded\n" +
+                                                        "• Last Check: " + currentTime + "\n\n" +
+                                                        "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+                            }
+                        }
+                    } catch (Exception ex) {
+                        testResultLabel.setText("✗ Error: " + ex.getMessage());
+                        testResultLabel.setForeground(Color.RED);
+                        modelNoteLabel.setText("Failed to load models");
+                        
+                        if (statusPlaceholder != null) {
+                            statusPlaceholder.setText("System Status Information\n\n" +
+                                                    "• Ollama Connection: ✗ Error\n" +
+                                                    "• Error: " + ex.getMessage() + "\n" +
+                                                    "• Last Check: " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "\n\n" +
+                                                    "Click 'Test Connection' to update status.\n\nAuthor: VermaOps | GitHub");
+                        }
+                    }
+                }
+            };
+            worker.execute();
+        });
+        
+        return container;
+    }
+
+    private JPanel createAdvancedSettingsPanel(Configuration config) {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Advanced Settings"));
+        
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.weightx = 1.0;
+        
+        int row = 0;
+        
+        // Common settings for all providers
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.gridwidth = 1;
+        panel.add(new JLabel("Max Tokens:"), gbc);
+        
+        gbc.gridx = 1;
+        JTextField maxTokensField = new JTextField(String.valueOf(config.getMaxTokens()), 10);
+        maxTokensField.setName("max_tokens");
+        panel.add(maxTokensField, gbc);
+        
+        row++;
+        
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        panel.add(new JLabel("Temperature:"), gbc);
+        
+        gbc.gridx = 1;
+        JTextField temperatureField = new JTextField("0.7", 10);
+        temperatureField.setName("temperature");
+        panel.add(temperatureField, gbc);
+        
+        row++;
+        
+        // Timeouts
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        panel.add(new JLabel("Connect Timeout (ms):"), gbc);
+        
+        gbc.gridx = 1;
+        JTextField connectTimeoutField = new JTextField(String.valueOf(config.getConnectTimeout()), 10);
+        connectTimeoutField.setName("connect_timeout");
+        panel.add(connectTimeoutField, gbc);
+        
+        row++;
+        
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        panel.add(new JLabel("Read Timeout (ms):"), gbc);
+        
+        gbc.gridx = 1;
+        JTextField readTimeoutField = new JTextField(String.valueOf(config.getReadTimeout()), 10);
+        readTimeoutField.setName("read_timeout");
+        panel.add(readTimeoutField, gbc);
+        
+        // Store references for saving
+        panel.putClientProperty("maxTokensField", maxTokensField);
+        panel.putClientProperty("temperatureField", temperatureField);
+        panel.putClientProperty("connectTimeoutField", connectTimeoutField);
+        panel.putClientProperty("readTimeoutField", readTimeoutField);
+        
+        return panel;
+    }
+
+    private void saveAdvancedSettings(Configuration config, JPanel advancedPanel) {
+        JTextField maxTokensField = (JTextField) advancedPanel.getClientProperty("maxTokensField");
+        JTextField temperatureField = (JTextField) advancedPanel.getClientProperty("temperatureField");
+        JTextField connectTimeoutField = (JTextField) advancedPanel.getClientProperty("connectTimeoutField");
+        JTextField readTimeoutField = (JTextField) advancedPanel.getClientProperty("readTimeoutField");
+        
+        if (maxTokensField != null) {
+            try {
+                config.setMaxTokens(Integer.parseInt(maxTokensField.getText().trim()));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (connectTimeoutField != null) {
+            try {
+                config.setConnectTimeout(Integer.parseInt(connectTimeoutField.getText().trim()));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (readTimeoutField != null) {
+            try {
+                config.setReadTimeout(Integer.parseInt(readTimeoutField.getText().trim()));
+            } catch (NumberFormatException ignored) {}
+        }
+        // Temperature is saved per-provider, not globally
     }
 
     private void browseForDirectory() {
@@ -1232,12 +1884,14 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         
         int row = 0;
         for (Finding f : result.getFindings()) {
+            // Serial number = row + 1 (1-indexed)
             tableModel.addRow(new Object[]{
+                row + 1,                         // # column - serial number
                 f.getSeverity(),
                 f.getTitle(),
                 f.getCategory(),
                 new File(f.getFilePath()).getName(),
-                f.getConfidence(),  // Raw double value for proper sorting
+                f.getConfidence(),
                 AIStatus.NOT_REQUESTED.getDisplayName()
             });
             
@@ -1429,7 +2083,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         }
         
         // Check Ollama availability first
-        if (!ollamaClient.isAvailable()) {
+        if (!aiProvider.isAvailable()) {
             int response = JOptionPane.showConfirmDialog(this,
                 "Ollama is not available. Would you like to check connection settings?",
                 "Connection Error",
@@ -1554,7 +2208,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             return;
         }
         
-        if (!ollamaClient.isAvailable()) {
+        if (!aiProvider.isAvailable()) {
             String errorMsg = "\n============================================================\n" +
                             "✗ ERROR: Ollama is not available\n" +
                             "Make sure Ollama is running (ollama serve)\n" +
@@ -1579,7 +2233,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         //promptArea.setText("");
         
         // Get model name for display
-        String modelName = ollamaClient.getModel();
+        String modelName = aiProvider.getModel();
         
         // Capture start time
         long startTime = System.currentTimeMillis();
@@ -1627,7 +2281,8 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             @Override
             protected String doInBackground() throws Exception {
                 // Pass the request to enable cancellation
-                return ollamaClient.generate(contextualPrompt, currentConsoleRequest);
+                AIResponse response = aiProvider.generateText(contextualPrompt, Map.of());
+                return response.getText();
             }
             
             @Override
@@ -1656,9 +2311,21 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
                     }
                     
                     // Estimate token usage
-                    int promptTokens = OllamaClient.estimateTokenCount(prompt);
-                    int responseTokens = OllamaClient.estimateTokenCount(response);
-                    int totalTokens = promptTokens + responseTokens;
+                    int promptTokens = 0;
+                    int responseTokens = 0;
+                    int totalTokens = 0;
+
+                    if (aiProvider instanceof OllamaProvider) {
+                        OllamaProvider ollamaProvider = (OllamaProvider) aiProvider;
+                        promptTokens = ollamaProvider.estimateTokenCount(prompt);
+                        responseTokens = ollamaProvider.estimateTokenCount(response);
+                        totalTokens = promptTokens + responseTokens;
+                    } else {
+                        // Fallback estimation for other providers
+                        promptTokens = (int) Math.ceil(prompt.length() / 4.0);
+                        responseTokens = (int) Math.ceil(response.length() / 4.0);
+                        totalTokens = promptTokens + responseTokens;
+                    }
                     
                     // Append completion block
                     String completeBlock ="✓ ANALYSIS COMPLETE\n" +
@@ -1724,7 +2391,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
         }
         
         // Force disconnect any lingering HTTP connections
-        // (handled by OllamaClient's cancellation checks)
+        // (handled by OllamaProvider's cancellation checks)
         
         // Append cancellation message if not already done
         if (currentConsoleRequest != null && currentConsoleRequest.getStatus() != AIStatus.CANCELLED) {
@@ -1816,21 +2483,21 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             protected void done() {
                 try {
                     VersionCheckResult result = get();
-                    Configuration config = Configuration.getInstance();
+                    Configuration loadedConfig = Configuration.getInstance();
                     
                     if (result.error != null) {
                         // Error occurred, log but don't show in UI
                         api.logging().logToOutput("Background version check failed: " + result.error);
-                        config.setVersionCheckError(result.error);
+                        loadedConfig.setVersionCheckError(result.error);
                         return;
                     }
                     
                     // Update configuration
-                    config.setUpdateAvailable(result.updateAvailable);
-                    config.setLatestVersion(result.latestVersion);
-                    config.setLastVersionCheckTime(System.currentTimeMillis());
-                    config.setVersionCheckError(null);
-                    config.saveToFile();
+                    loadedConfig.setUpdateAvailable(result.updateAvailable);
+                    loadedConfig.setLatestVersion(result.latestVersion);
+                    loadedConfig.setLastVersionCheckTime(System.currentTimeMillis());
+                    loadedConfig.setVersionCheckError(null);
+                    loadedConfig.saveToFile();
                     
                     // Update button color
                     SwingUtilities.invokeLater(() -> {
@@ -2181,15 +2848,21 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
      */
     private void exportSelectedRowsToCsv(File file, int[] selectedViewRows) throws Exception {
         try (PrintWriter writer = new PrintWriter(new FileWriter(file))) {
-            // Write header
-            writer.println("Severity,Title,Category,File,Line Number,Confidence,AI Status,Description,Evidence,AI Analysis");
+            // Write header - added "#" column
+            writer.println("#,Severity,Title,Category,File,Line Number,Confidence,AI Status,Description,Evidence,AI Analysis");
             
             // Write data rows for selected findings only
             for (int viewRow : selectedViewRows) {
                 int modelRow = findingsTable.convertRowIndexToModel(viewRow);
                 Finding finding = currentFindings.getAllFindings().get(modelRow);
                 
+                // Get serial number from the table
+                int serialNumber = (Integer) tableModel.getValueAt(modelRow, COL_NUMBER);
+                
                 StringBuilder line = new StringBuilder();
+                
+                // Serial number (from stored value)
+                line.append(serialNumber).append(",");
                 
                 // Severity
                 line.append(escapeCsv(finding.getSeverity().toString())).append(",");
@@ -2237,11 +2910,13 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
      */
     private void exportSelectedRowsToHtml(File file, int[] selectedViewRows, String projectName) throws Exception {
         try (PrintWriter writer = new PrintWriter(new FileWriter(file, StandardCharsets.UTF_8))) {
-            // Collect selected findings
-            List<Finding> selectedFindings = new ArrayList<>();
+            // Collect selected findings with their serial numbers
+            List<Object[]> selectedData = new ArrayList<>();
             for (int viewRow : selectedViewRows) {
                 int modelRow = findingsTable.convertRowIndexToModel(viewRow);
-                selectedFindings.add(currentFindings.getAllFindings().get(modelRow));
+                Finding finding = currentFindings.getAllFindings().get(modelRow);
+                int serialNumber = (Integer) tableModel.getValueAt(modelRow, COL_NUMBER);
+                selectedData.add(new Object[]{serialNumber, finding});
             }
             
             // Calculate severity counts
@@ -2249,7 +2924,8 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             for (Severity severity : Severity.values()) {
                 severityCounts.put(severity, 0);
             }
-            for (Finding finding : selectedFindings) {
+            for (Object[] data : selectedData) {
+                Finding finding = (Finding) data[1];
                 severityCounts.merge(finding.getSeverity(), 1, Integer::sum);
             }
             
@@ -2272,6 +2948,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             writer.println("        .summary-item { margin: 5px 0; }");
             writer.println("        .finding { border: 1px solid #ddd; margin: 15px 0; padding: 15px; border-radius: 5px; }");
             writer.println("        .finding-header { display: flex; align-items: center; margin-bottom: 10px; }");
+            writer.println("        .finding-number { font-weight: bold; color: #666; margin-right: 10px; }");
             writer.println("        .severity-badge { padding: 3px 10px; border-radius: 3px; font-weight: bold; margin-right: 10px; }");
             writer.println("        .severity-critical { background-color: #ff4444; color: white; }");
             writer.println("        .severity-high { background-color: #ff8800; color: white; }");
@@ -2302,7 +2979,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             // Summary section
             writer.println("    <div class=\"summary\">");
             writer.println("        <h2>Summary</h2>");
-            writer.println("        <div class=\"summary-item\">Total Selected Findings: " + selectedFindings.size() + "</div>");
+            writer.println("        <div class=\"summary-item\">Total Selected Findings: " + selectedData.size() + "</div>");
             writer.println("        <div class=\"summary-item\">Severity Breakdown:</div>");
             writer.println("        <ul style=\"list-style-type: none; padding-left: 0;\">");
             for (Severity severity : Severity.values()) {
@@ -2319,12 +2996,15 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             // Detailed findings
             writer.println("    <h2>Detailed Findings</h2>");
             
-            for (Finding finding : selectedFindings) {
+            for (Object[] data : selectedData) {
+                int serialNumber = (Integer) data[0];
+                Finding finding = (Finding) data[1];
                 String severityClass = getSeverityCssClass(finding.getSeverity());
                 String fileName = new File(finding.getFilePath()).getName();
                 
                 writer.println("    <div class=\"finding\">");
                 writer.println("        <div class=\"finding-header\">");
+                writer.println("            <span class=\"finding-number\">#" + serialNumber + "</span>");
                 writer.println("            <span class=\"severity-badge " + severityClass + "\">" + 
                     finding.getSeverity().getDisplayName() + "</span>");
                 writer.println("            <span class=\"finding-title\">" + escapeHtml(finding.getTitle()) + "</span>");
@@ -2361,7 +3041,7 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             // Footer
             writer.println("    <div class=\"footer\">");
             writer.println("        Generated by APK-o-llama v" + VersionManager.getCurrentVersion() + "<br>");
-            writer.println("        Author: BerserkiKun | GitHub: https://github.com/BerserkiKun/apk-o-llama");
+            writer.println("        Author: VermaOps | GitHub: https://github.com/VermaOps/apk-o-llama");
             writer.println("    </div>");
             
             writer.println("</body>");
@@ -2548,6 +3228,19 @@ public class MainTab extends JPanel implements OllamaRequestManager.StatusUpdate
             
             // Compare numeric values (0.0-1.0)
             return Double.compare(d1, d2);
+        }
+    }
+
+    // Inner class for test connection results to avoid unchecked casts
+    private static class TestConnectionResult {
+        boolean connected;
+        List<String> models;
+        String error;
+        
+        TestConnectionResult(boolean connected, List<String> models, String error) {
+            this.connected = connected;
+            this.models = models != null ? models : new ArrayList<>();
+            this.error = error;
         }
     }
 }

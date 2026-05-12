@@ -8,10 +8,9 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.time.Instant;
-import ai.OllamaClient.OllamaTimeoutException;
-import ai.OllamaClient.OllamaRateLimitException;
-import ai.OllamaClient.OllamaServiceUnavailableException;
-import java.util.concurrent.TimeUnit;
+import ai.OllamaProvider.OllamaTimeoutException;
+import ai.OllamaProvider.OllamaRateLimitException;
+import ai.OllamaProvider.OllamaServiceUnavailableException;
 
 public class OllamaRequestManager {
     private static final int MAX_CONCURRENT_REQUESTS = 1;
@@ -19,7 +18,7 @@ public class OllamaRequestManager {
     private static final int REQUEST_TIMEOUT_SECONDS = 53;
     private static final int RETRY_DELAY_MS = 3500;
     
-    private final OllamaClient ollamaClient;
+    private final AIProvider aiProvider;
     private final Map<String, OllamaRequest> requests;
     private final PriorityBlockingQueue<OllamaRequest> requestQueue;
     private final ExecutorService executorService;
@@ -49,8 +48,8 @@ public class OllamaRequestManager {
         }
     }
     
-    public OllamaRequestManager(OllamaClient ollamaClient) {
-        this.ollamaClient = ollamaClient;
+    public OllamaRequestManager(AIProvider aiProvider) {
+        this.aiProvider = aiProvider;
         this.requests = new ConcurrentHashMap<>();
         this.requestQueue = new PriorityBlockingQueue<>(100, 
             Comparator.comparing(OllamaRequest::getCreatedAt));
@@ -63,7 +62,7 @@ public class OllamaRequestManager {
         
         startProcessingThread();
         startRetryMonitor();
-        startHealthCheck(); // Add health check
+        startHealthCheck();
     }
     
     private void startHealthCheck() {
@@ -74,7 +73,7 @@ public class OllamaRequestManager {
                 
                 // If idle too long, verify connection
                 if (idleSeconds > MAX_IDLE_TIME_SECONDS) {
-                    boolean available = ollamaClient.isAvailable();
+                    boolean available = aiProvider.isAvailable();
                     if (!connectionHealthy && available) {
                         // Connection recovered
                         connectionHealthy = true;
@@ -173,7 +172,7 @@ public class OllamaRequestManager {
         statusWorker.execute();
     }
     
-    private void handleRateLimit(OllamaRequest request, OllamaClient.OllamaRateLimitException e) {
+    private void handleRateLimit(OllamaRequest request, OllamaProvider.OllamaRateLimitException e) {
         synchronized(request) {
             if (request.isCancelled()) {
                 return;
@@ -197,7 +196,7 @@ public class OllamaRequestManager {
         }
     }
 
-    private void handleServiceUnavailable(OllamaRequest request, OllamaClient.OllamaServiceUnavailableException e) {
+    private void handleServiceUnavailable(OllamaRequest request, OllamaProvider.OllamaServiceUnavailableException e) {
         synchronized(request) {
             if (request.isCancelled()) {
                 return;
@@ -211,7 +210,7 @@ public class OllamaRequestManager {
                 connectionHealthy = false;
                 // Longer delay for service unavailable
                 retryExecutor.schedule(() -> {
-                    if (!request.isCancelled() && ollamaClient.isAvailable()) {
+                    if (!request.isCancelled() && aiProvider.isAvailable()) {
                         connectionHealthy = true;
                         requestQueue.offer(request);
                     } else if (!request.isCancelled()) {
@@ -271,7 +270,8 @@ public class OllamaRequestManager {
                 
                 // Execute the request with cancellation support
                 try {
-                    String response = ollamaClient.generate(request.getPrompt(), request);
+                    AIResponse aiResponse = aiProvider.generateText(request.getPrompt(), Map.of());
+                    String response = aiResponse.getText();
                     
                     // Check cancellation before processing response
                     if (request.isCancelled()) {
@@ -284,9 +284,13 @@ public class OllamaRequestManager {
                         synchronized(request) {
                             if (!request.isCancelled()) {
                                 request.setResponse(response);
-                                // Estimate tokens from prompt + response
-                                int promptTokens = OllamaClient.estimateTokenCount(request.getPrompt());
-                                int responseTokens = OllamaClient.estimateTokenCount(response);
+                                // Cast to OllamaProvider to access estimateTokenCount
+                                int promptTokens = 0;
+                                int responseTokens = 0;
+                                if (aiProvider instanceof OllamaProvider) {
+                                    promptTokens = ((OllamaProvider) aiProvider).estimateTokenCount(request.getPrompt());
+                                    responseTokens = ((OllamaProvider) aiProvider).estimateTokenCount(response);
+                                }
                                 request.setStatus(AIStatus.COMPLETED);
                             }
                         }
@@ -301,13 +305,13 @@ public class OllamaRequestManager {
                         }
                     }
                     publishUpdate(request, false);
-                } catch (OllamaClient.OllamaTimeoutException e) {
+                } catch (OllamaProvider.OllamaTimeoutException e) {
                     if (!request.isCancelled()) {
                         handleRequestFailure(request, e.getMessage());
                     }
-                } catch (OllamaClient.OllamaRateLimitException e) {
+                } catch (OllamaProvider.OllamaRateLimitException e) {
                     handleRateLimit(request, e);
-                } catch (OllamaClient.OllamaServiceUnavailableException e) {
+                } catch (OllamaProvider.OllamaServiceUnavailableException e) {
                     handleServiceUnavailable(request, e);
                 } catch (Exception e) {
                     if (!request.isCancelled()) {
