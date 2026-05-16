@@ -527,7 +527,7 @@ If APK-o-Llama helps your mobile security testing, consider supporting its devel
 **⭐ Star the Repository**: Show your support by starring the project on GitHub!
 
 **Support Links**:
-- 💰 **PayPal**: [PayPal](https://www.paypal.com/ncp/payment/7Y3836GETVF94)
+- 💰 **PayPal**: [PayPal](https://www.paypal.com/ncp/payment/JDYFC8VULDC2G)
 
 Your support helps maintain the project, add new analyzers, and improve AI integration.
 
