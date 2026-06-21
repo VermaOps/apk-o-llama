@@ -19,10 +19,7 @@ OUTPUT_JAR="$PROJECT_DIR/apk-o-llama.jar"
 STANDALONE_JAR="$PROJECT_DIR/apk-o-llama-standalone.jar"
 
 # Burp JAR location (macOS default - adjust for your setup)
-BURP_JAR="/Applications/Burp Suite Professional.app/Contents/Resources/app/burpsuite_pro.jar"
-if [ ! -f "$BURP_JAR" ]; then
-    BURP_JAR="/Applications/Burp Suite Community Edition.app/Contents/Resources/app/burpsuite_community.jar"
-fi
+BURP_JAR="/Applications/Burp Suite.app/Contents/Resources/app/burpsuite.jar"
 
 # Check if Burp JAR exists
 if [ ! -f "$BURP_JAR" ]; then
