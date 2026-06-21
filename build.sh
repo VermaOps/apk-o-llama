@@ -1,11 +1,13 @@
 #!/bin/bash
-# APK-o-Llama Build Script
+# APK-o-Llama Build Script v1.3.0
 # Builds Burp Suite extension for Android APK security analysis
+# Supports: Ollama, OpenAI, Claude AI providers
 
 set -e
 
 echo "=========================================="
-echo "APK-o-Llama Build Script"
+echo "APK-o-Llama Build Script v1.3.0"
+echo "AI-Powered Android Security Analysis"
 echo "=========================================="
 echo ""
 
@@ -14,6 +16,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$PROJECT_DIR/src/main"
 BUILD_DIR="$PROJECT_DIR/build"
 OUTPUT_JAR="$PROJECT_DIR/apk-o-llama.jar"
+STANDALONE_JAR="$PROJECT_DIR/apk-o-llama-standalone.jar"
 
 # Burp JAR location (macOS default - adjust for your setup)
 BURP_JAR="/Applications/Burp Suite Professional.app/Contents/Resources/app/burpsuite_pro.jar"
@@ -38,7 +41,7 @@ if [ ! -f "$BURP_JAR" ]; then
     fi
 fi
 
-echo "[1/8] Checking prerequisites..."
+echo "[1/9] Checking prerequisites..."
 echo "  Java version:"
 java -version 2>&1 | head -1
 echo "  Burp JAR: $(basename "$BURP_JAR")"
@@ -47,7 +50,7 @@ echo "  Source directory: $SRC_DIR"
 
 # Check source directory structure
 echo ""
-echo "[2/8] Checking project structure..."
+echo "[2/9] Checking project structure..."
 if [ ! -d "$SRC_DIR" ]; then
     echo "  ✗ Source directory not found: $SRC_DIR"
     echo "  Creating directory structure..."
@@ -69,7 +72,7 @@ done
 
 # Count Java files by directory
 echo ""
-echo "[3/8] Scanning for Java files..."
+echo "[3/9] Scanning for Java files..."
 
 DIRECTORIES=("ai" "analyzers" "burp" "burp/ui" "core" "models" "rules" "scanner" "utils")
 
@@ -98,7 +101,7 @@ echo "  Total Java files: $TOTAL_FILES"
 
 # List all Java files
 echo ""
-echo "[4/8] Listing all source files:"
+echo "[4/9] Listing all source files:"
 find "$SRC_DIR" -name "*.java" | while read -r file; do
     rel_path="${file#$SRC_DIR/}"
     echo "    $rel_path"
@@ -106,7 +109,7 @@ done
 
 # Check critical files
 echo ""
-echo "[5/8] Checking critical files..."
+echo "[5/9] Checking critical files..."
 
 CRITICAL_FILES=(
     # Burp extension core
@@ -135,19 +138,25 @@ CRITICAL_FILES=(
     "models/Severity.java"
     "models/AIStatus.java"                     # ENHANCED - TIMEOUT, RATE_LIMITED, CANCELLED
     
+    # AI Integration - Complete set
+    "ai/AIProvider.java"
+    "ai/AIResponse.java"
+    "ai/AIProviderFactory.java"
+    "ai/OllamaClient.java"
+    "ai/OllamaProvider.java"
+    "ai/OllamaRequest.java"
+    "ai/OllamaRequestManager.java"
+    "ai/OpenAIProvider.java"
+    "ai/ClaudeProvider.java"
+    "ai/ConversationHistory.java"
+    
     # Rules engine
-    "rules/RuleEngine.java"                    # ENHANCED - New analyzer registrations
+    "rules/RuleEngine.java"
     "rules/RuleRegistry.java"
     
-    # Scanner - ENHANCED
-    "scanner/FileScanner.java"                  # ENHANCED - New file types
-    "scanner/FileType.java"                     # ENHANCED - CERTIFICATE, ASSET, etc.
-    
-    # AI integration - COMPLETELY OVERHAULED
-    "ai/OllamaClient.java"                      # ENHANCED - Cancellation, exceptions
-    "ai/OllamaRequestManager.java"               # NEW - Queue, retry, health system
-    "ai/OllamaRequest.java"                      # NEW - Request with cancellation
-    "ai/ConversationHistory.java"                # NEW - AI Console context
+    # Scanner
+    "scanner/FileScanner.java"
+    "scanner/FileType.java"
     
     # Utilities
     "utils/EntropyCalculator.java"
@@ -175,41 +184,6 @@ if [ ${#missing_files[@]} -gt 0 ]; then
     echo "  ⚠️ Missing files:"
     printf "    %s\n" "${missing_files[@]}"
     
-    # Check if missing files are the new ones we just created
-    new_missing_files=()
-    old_missing_files=()
-    
-    for file in "${missing_files[@]}"; do
-        case "$file" in
-            "models/AIStatus.java"|"ai/OllamaRequestManager.java"|"ai/OllamaRequest.java")
-                new_missing_files+=("$file")
-                ;;
-            *)
-                old_missing_files+=("$file")
-                ;;
-        esac
-    done
-    
-    if [ ${#new_missing_files[@]} -gt 0 ]; then
-        echo ""
-        echo "  Note: These are new files from the Ollama integration update."
-        echo "  They should be created before building."
-        echo ""
-        echo "  Run these commands to create stub files:"
-        echo "    mkdir -p \"$SRC_DIR/models\" \"$SRC_DIR/ai\""
-        echo "    touch \"$SRC_DIR/models/AIStatus.java\""
-        echo "    touch \"$SRC_DIR/ai/OllamaRequestManager.java\""
-        echo "    touch \"$SRC_DIR/ai/OllamaRequest.java\""
-        echo ""
-        echo "  Then copy the content from the implementation provided earlier."
-    fi
-    
-    if [ ${#old_missing_files[@]} -gt 0 ]; then
-        echo ""
-        echo "  These are original files that should exist:"
-        printf "    %s\n" "${old_missing_files[@]}"
-    fi
-    
     read -p "  Continue anyway? (y/n): " continue_choice
     if [ "$continue_choice" != "y" ] && [ "$continue_choice" != "Y" ]; then
         exit 1
@@ -220,7 +194,7 @@ fi
 
 # Create build directory
 echo ""
-echo "[6/8] Creating build directories..."
+echo "[6/9] Creating build directories..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
@@ -249,6 +223,7 @@ fi
 
 echo "  Classpath: $(echo "$CLASS_PATH" | tr ':' '\n' | sed 's|^|    |')"
 
+# Compile with enhanced flags
 javac -d "$BUILD_DIR" \
       -cp "$CLASS_PATH" \
       -Xlint:unchecked \
@@ -288,7 +263,7 @@ fi
 
 # Package the JAR
 echo ""
-echo "[7/8] Packaging JAR..."
+echo "[7/9] Packaging JAR..."
 
 # Create directory structure in build for packaging
 mkdir -p "$BUILD_DIR/META-INF"
@@ -296,6 +271,7 @@ cat > "$BUILD_DIR/META-INF/MANIFEST.MF" << EOF
 Manifest-Version: 1.0
 Created-By: APK-o-Llama Build Script
 Main-Class: burp.BurpExtender
+Build-Date: $(date)
 EOF
 
 # Create JAR with proper package structure
@@ -315,7 +291,7 @@ echo "  ✓ Created JAR: $(basename "$OUTPUT_JAR")"
 
 # Verify the JAR
 echo ""
-echo "[8/8] Verifying JAR..."
+echo "[8/9] Verifying JAR..."
 
 if [ ! -f "$OUTPUT_JAR" ]; then
     echo "  ✗ JAR creation failed!"
@@ -331,22 +307,22 @@ echo "  Total classes: $CLASS_COUNT"
 
 echo ""
 echo "  Important packages in JAR:"
-jar -tf "$OUTPUT_JAR" | grep "\.class$" | sed 's/\.class$//' | sed 's/\//./g' | sort | grep -E "(ai|models|burp|MainTab|Ollama)" | sed 's/^/    /'
+jar -tf "$OUTPUT_JAR" | grep "\.class$" | sed 's/\.class$//' | sed 's/\//./g' | sort | grep -E "(ai|models|burp|analyzers|rules|scanner|core)" | sed 's/^/    /'
 
 echo ""
 echo "  All packages:"
 jar -tf "$OUTPUT_JAR" | grep "\.class$" | sed 's/\.class$//' | sed 's/\//./g' | sort | uniq | sed 's/^/    /'
 
-# Create a standalone version (without Burp dependencies)
+# Create standalone version (without Burp dependencies)
 echo ""
-echo "[Optional] Creating standalone version..."
-STANDALONE_JAR="$PROJECT_DIR/apk-o-llama-standalone.jar"
+echo "[9/9] Creating standalone version..."
 
 # Create a manifest for standalone version
 cat > "$BUILD_DIR/META-INF/MANIFEST.MF.standalone" << EOF
 Manifest-Version: 1.0
 Created-By: APK-o-Llama Build Script
 Main-Class: core.StandaloneTest
+Build-Date: $(date)
 EOF
 
 cd "$BUILD_DIR"
@@ -360,7 +336,7 @@ else
     echo "  ⚠️ Could not create standalone JAR"
 fi
 
-# Summary
+# Generate build info
 echo ""
 echo "=========================================="
 echo "BUILD SUCCESSFUL! 🎉"
@@ -391,7 +367,18 @@ else
     echo "  java -cp \"$OUTPUT_JAR\" core.StandaloneTest /path/to/apk/directory"
 fi
 echo ""
-echo "Note: For AI features, ensure Ollama is running:"
-echo "      ollama serve"
+echo "AI Provider Support:"
+echo "  • Ollama: http://localhost:11434 (default)"
+echo "  • OpenAI: Requires OPENAI_API_KEY environment variable"
+echo "  • Claude: Requires CLAUDE_API_KEY environment variable"
+echo ""
+echo "To configure AI provider:"
+echo "  export AI_PROVIDER=ollama|openai|claude"
+echo "  export OPENAI_API_KEY=sk-...  (for OpenAI)"
+echo "  export CLAUDE_API_KEY=sk-ant-... (for Claude)"
+echo ""
+echo "For Ollama, ensure it's running:"
+echo "  ollama serve"
+echo "  ollama pull qwen2.5-coder:7b"
 echo ""
 echo "=========================================="
